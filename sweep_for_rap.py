@@ -87,9 +87,26 @@ def evaluate_ppl_wikitext2(model, tokenizer, device, max_seq_len=2048):
 
 
 def slice_model(sparsity):
-    """Slice LLaMA-2 7B at given sparsity using SliceGPT."""
-    from slicegpt import data_utils, hf_utils, layernorm_fusion, rotate, utils
+    """Slice LLaMA-2 7B at given sparsity using SliceGPT. Caches to disk."""
+    from slicegpt import data_utils, hf_utils, layernorm_fusion, rotate
     from slicegpt.rotate import ConstSlicingScheduler
+
+    save_dir = Path(f"sliced_models/llama2_{sparsity}")
+    ckpt_path = save_dir / "model.pt"
+
+    # Load from cache if available
+    if ckpt_path.exists():
+        print(f"  Loading cached sliced model from {ckpt_path}", flush=True)
+        model_adapter, tokenizer = hf_utils.get_model_and_tokenizer(MODEL_NAME, dtype=torch.float16)
+        layernorm_fusion.replace_layers(model_adapter)
+        layernorm_fusion.fuse_modules(model_adapter)
+        new_dim = int((1 - sparsity) * model_adapter.hidden_size)
+        new_dim -= new_dim % 8
+        scheduler = ConstSlicingScheduler(new_dim)
+        rotate.slice_rotated_model(model_adapter, scheduler)
+        state_dict = torch.load(str(ckpt_path), map_location="cpu", weights_only=True)
+        model_adapter.model.load_state_dict(state_dict)
+        return model_adapter.model, tokenizer
 
     print(f"  Slicing with sparsity={sparsity}...", flush=True)
     model_adapter, tokenizer = hf_utils.get_model_and_tokenizer(MODEL_NAME, dtype=torch.float16)
@@ -107,12 +124,17 @@ def slice_model(sparsity):
 
     # Compute new embedding dimension
     new_dim = int((1 - sparsity) * model_adapter.hidden_size)
-    new_dim -= new_dim % 8  # round down to multiple of 8
+    new_dim -= new_dim % 8
     print(f"  New embedding dimension: {new_dim} (actual sparsity: {100*(1 - new_dim / model_adapter.hidden_size):.2f}%)", flush=True)
 
     # Rotate and slice
     scheduler = ConstSlicingScheduler(new_dim)
     rotate.rotate_and_slice(model_adapter, train_loader, scheduler, final_orientation="random")
+
+    # Save state dict
+    save_dir.mkdir(parents=True, exist_ok=True)
+    torch.save(model_adapter.model.state_dict(), str(ckpt_path))
+    print(f"  Saved sliced model to {ckpt_path} ({ckpt_path.stat().st_size / 1e9:.1f}GB)", flush=True)
 
     return model_adapter.model, tokenizer
 

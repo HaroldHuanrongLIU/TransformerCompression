@@ -71,17 +71,28 @@ def main():
 
         # Slice model
         model_adapter, tokenizer = hf_utils.get_model_and_tokenizer(MODEL_NAME, dtype=torch.float16)
-        dataset = data_utils.get_dataset("wikitext2")
-        train_loader = data_utils.prepare_dataloader(
-            dataset=dataset["train"], tokenizer=tokenizer,
-            max_seqlen=2048, batch_size=16, nsamples=128, seed=42,
-        )
         layernorm_fusion.replace_layers(model_adapter)
         layernorm_fusion.fuse_modules(model_adapter)
         new_dim = int((1 - sparsity) * model_adapter.hidden_size)
         new_dim -= new_dim % 8
         scheduler = ConstSlicingScheduler(new_dim)
-        rotate.rotate_and_slice(model_adapter, train_loader, scheduler, final_orientation="random")
+
+        ckpt_path = Path(f"sliced_models/llama2_{sparsity}/model.pt")
+        if ckpt_path.exists():
+            print(f"  Loading cached model from {ckpt_path}", flush=True)
+            rotate.slice_rotated_model(model_adapter, scheduler)
+            state_dict = torch.load(str(ckpt_path), map_location="cpu", weights_only=True)
+            model_adapter.model.load_state_dict(state_dict)
+        else:
+            dataset = data_utils.get_dataset("wikitext2")
+            train_loader = data_utils.prepare_dataloader(
+                dataset=dataset["train"], tokenizer=tokenizer,
+                max_seqlen=2048, batch_size=16, nsamples=128, seed=42,
+            )
+            rotate.rotate_and_slice(model_adapter, train_loader, scheduler, final_orientation="random")
+            ckpt_path.parent.mkdir(parents=True, exist_ok=True)
+            torch.save(model_adapter.model.state_dict(), str(ckpt_path))
+            print(f"  Saved to {ckpt_path}", flush=True)
 
         model = model_adapter.model
         model.half().cuda()
