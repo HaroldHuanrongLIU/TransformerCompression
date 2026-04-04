@@ -95,11 +95,11 @@ def main():
     parser.add_argument("--round-interval", type=int, default=8)
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--seq-len", type=int, default=2048)
-    parser.add_argument("--dataset", type=str, default="wikitext2", choices=["wikitext2", "ptb"])
     parser.add_argument("--device", type=str, default="cuda")
     args = parser.parse_args()
 
     torch.manual_seed(42)
+    datasets_to_eval = ["wikitext2", "ptb"]
 
     # Load model
     print(f"Model: {args.model}", flush=True)
@@ -118,26 +118,30 @@ def main():
     model.to(args.device)
     model.eval()
 
-    # Load data
-    dataloader = load_eval_dataloader(tokenizer, dataset_name=args.dataset, seq_len=args.seq_len, batch_size=args.batch_size)
-    print(f"{args.dataset} test: {len(dataloader.dataset)} samples, bs={args.batch_size}, seq_len={args.seq_len}", flush=True)
-
-    # Evaluate
+    # Evaluate on all datasets
     torch.cuda.reset_peak_memory_stats()
     torch.cuda.empty_cache()
     gc.collect()
 
-    t0 = time.time()
-    ppl = evaluate_perplexity(model, dataloader, torch.device(args.device))
-    elapsed = time.time() - t0
+    ppl_results = {}
+    total_time = 0.0
+    for ds_name in datasets_to_eval:
+        dataloader = load_eval_dataloader(tokenizer, dataset_name=ds_name, seq_len=args.seq_len, batch_size=args.batch_size)
+        t0 = time.time()
+        ppl = evaluate_perplexity(model, dataloader, torch.device(args.device))
+        elapsed = time.time() - t0
+        ppl_results[ds_name] = ppl
+        total_time += elapsed
+        print(f"  {ds_name}: PPL={ppl:.2f} ({elapsed:.1f}s)", flush=True)
 
     torch.cuda.synchronize()
     gpu_nvidia_smi = get_nvidia_smi_memory()
 
     print(f"\n{'='*40}", flush=True)
-    print(f"  PPL ({args.dataset}): {ppl:.2f}", flush=True)
+    for ds_name, ppl in ppl_results.items():
+        print(f"  PPL ({ds_name}): {ppl:.2f}", flush=True)
     print(f"  GPU (nvidia-smi): {gpu_nvidia_smi:.2f} GB", flush=True)
-    print(f"  Eval time: {elapsed:.1f} s", flush=True)
+    print(f"  Total eval time: {total_time:.1f} s", flush=True)
     print(f"{'='*40}", flush=True)
 
 
