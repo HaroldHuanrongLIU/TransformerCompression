@@ -5,6 +5,7 @@
 
 experiments/results*
 experiments/sliced_models
+sliced_models/
 
 # logs
 log/
