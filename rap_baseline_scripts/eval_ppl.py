@@ -13,7 +13,6 @@ Usage:
 import argparse
 import gc
 import math
-import subprocess
 import sys
 import time
 
@@ -76,15 +75,14 @@ def evaluate_perplexity(model, dataloader, device):
     return math.exp(avg_loss)
 
 
-def get_nvidia_smi_memory():
-    """Get GPU memory usage from nvidia-smi in GB."""
-    result = subprocess.run(
-        ["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits", "-i", "0"],
-        capture_output=True, text=True,
-    )
-    if result.returncode == 0:
-        return int(result.stdout.strip()) / 1024
-    return 0.0
+def get_gpu_memory_gb(device_index=0):
+    """Get GPU memory usage via nvidia-ml-py (pynvml) in GB."""
+    import pynvml
+    pynvml.nvmlInit()
+    handle = pynvml.nvmlDeviceGetHandleByIndex(device_index)
+    mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+    pynvml.nvmlShutdown()
+    return mem_info.used / 1024**3
 
 
 def main():
@@ -135,12 +133,12 @@ def main():
         print(f"  {ds_name}: PPL={ppl:.2f} ({elapsed:.1f}s)", flush=True)
 
     torch.cuda.synchronize()
-    gpu_nvidia_smi = get_nvidia_smi_memory()
+    gpu_mem_gb = get_gpu_memory_gb()
 
     print(f"\n{'='*40}", flush=True)
     for ds_name, ppl in ppl_results.items():
         print(f"  PPL ({ds_name}): {ppl:.2f}", flush=True)
-    print(f"  GPU (nvidia-smi): {gpu_nvidia_smi:.2f} GB", flush=True)
+    print(f"  GPU memory: {gpu_mem_gb:.2f} GB", flush=True)
     print(f"  Total eval time: {total_time:.1f} s", flush=True)
     print(f"{'='*40}", flush=True)
 
