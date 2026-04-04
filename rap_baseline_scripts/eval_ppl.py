@@ -27,10 +27,17 @@ sys.path.insert(0, "src")
 from slicegpt import hf_utils
 
 
-def load_wikitext2_dataloader(tokenizer, seq_len=2048, batch_size=8):
-    """Load wikitext2 test split — same logic as RAP's load_calibration_dataset."""
-    ds = load_dataset("Salesforce/wikitext", "wikitext-2-raw-v1", split="test")
-    texts = [row["text"] for row in ds if row["text"].strip()]
+def load_eval_dataloader(tokenizer, dataset_name="wikitext2", seq_len=2048, batch_size=8):
+    """Load test split — same logic as RAP's load_calibration_dataset."""
+    if dataset_name == "wikitext2":
+        ds = load_dataset("Salesforce/wikitext", "wikitext-2-raw-v1", split="test")
+        texts = [row["text"] for row in ds if row["text"].strip()]
+    elif dataset_name == "ptb":
+        ds = load_dataset("ptb_text_only", split="test", revision="refs/convert/parquet")
+        texts = [row["sentence"] for row in ds if row["sentence"].strip()]
+    else:
+        raise ValueError(f"Unknown dataset: {dataset_name}. Use 'wikitext2' or 'ptb'.")
+
     full_text = " ".join(texts)
     tokens = tokenizer(full_text, return_tensors="pt", truncation=False)
     input_ids = tokens["input_ids"].squeeze(0)
@@ -88,6 +95,7 @@ def main():
     parser.add_argument("--round-interval", type=int, default=8)
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--seq-len", type=int, default=2048)
+    parser.add_argument("--dataset", type=str, default="wikitext2", choices=["wikitext2", "ptb"])
     parser.add_argument("--device", type=str, default="cuda")
     args = parser.parse_args()
 
@@ -111,8 +119,8 @@ def main():
     model.eval()
 
     # Load data
-    dataloader = load_wikitext2_dataloader(tokenizer, seq_len=args.seq_len, batch_size=args.batch_size)
-    print(f"WikiText-2 test: {len(dataloader.dataset)} samples, bs={args.batch_size}, seq_len={args.seq_len}", flush=True)
+    dataloader = load_eval_dataloader(tokenizer, dataset_name=args.dataset, seq_len=args.seq_len, batch_size=args.batch_size)
+    print(f"{args.dataset} test: {len(dataloader.dataset)} samples, bs={args.batch_size}, seq_len={args.seq_len}", flush=True)
 
     # Evaluate
     torch.cuda.reset_peak_memory_stats()
@@ -127,7 +135,7 @@ def main():
     gpu_nvidia_smi = get_nvidia_smi_memory()
 
     print(f"\n{'='*40}", flush=True)
-    print(f"  PPL (wikitext2): {ppl:.2f}", flush=True)
+    print(f"  PPL ({args.dataset}): {ppl:.2f}", flush=True)
     print(f"  GPU (nvidia-smi): {gpu_nvidia_smi:.2f} GB", flush=True)
     print(f"  Eval time: {elapsed:.1f} s", flush=True)
     print(f"{'='*40}", flush=True)

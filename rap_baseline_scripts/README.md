@@ -9,7 +9,7 @@ Scripts for evaluating SliceGPT as a baseline for the RAP project. All scripts u
 Evaluate perplexity and GPU memory of a sliced (or dense) model.
 
 **Evaluation protocol** (same as RAP):
-- Dataset: WikiText-2 test split
+- Dataset: WikiText-2 or PTB test split
 - Tokenization: concatenate all text, chunk into `seq_len` sequences
 - Loss: CrossEntropyLoss per token, masked by attention_mask
 - PPL: exp(mean of all token-level losses)
@@ -20,13 +20,19 @@ Evaluate perplexity and GPU memory of a sliced (or dense) model.
 ```bash
 cd baselines/SliceGPT
 
-# Dense model
+# Dense model (wikitext2)
 uv run python rap_baseline_scripts/eval_ppl.py
 
-# Sliced model
+# Sliced model (wikitext2)
 uv run python rap_baseline_scripts/eval_ppl.py \
   --sliced-model-path sliced_models/llama2_0.4 \
   --sparsity 0.4
+
+# PTB dataset
+uv run python rap_baseline_scripts/eval_ppl.py \
+  --sliced-model-path sliced_models/llama2_0.4 \
+  --sparsity 0.4 \
+  --dataset ptb
 
 # Custom batch size and seq length
 uv run python rap_baseline_scripts/eval_ppl.py \
@@ -46,4 +52,5 @@ uv run python rap_baseline_scripts/eval_ppl.py \
 | `--round-interval` | 8 | Rounding interval for embedding dimension |
 | `--batch-size` | 8 | Batch size for evaluation |
 | `--seq-len` | 2048 | Sequence length |
+| `--dataset` | wikitext2 | Evaluation dataset: `wikitext2` or `ptb` |
 | `--device` | cuda | PyTorch device |
