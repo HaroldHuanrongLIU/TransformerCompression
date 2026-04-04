@@ -51,13 +51,26 @@ def load_eval_dataloader(tokenizer, dataset_name="wikitext2", seq_len=2048, batc
 
 @torch.no_grad()
 def evaluate_perplexity(model, dataloader, device):
-    """Evaluate PPL — same logic as RAP's evaluate_perplexity."""
+    """Evaluate PPL and latency — same logic as RAP's evaluate_perplexity.
+
+    Returns: (ppl, latency_sec, n_samples)
+    """
     model.eval()
     total_loss = 0.0
     total_tokens = 0
+    n_samples = 0
 
     loss_fn = nn.CrossEntropyLoss(reduction="none")
 
+    # Warmup
+    warmup_batch = next(iter(dataloader))
+    model(input_ids=warmup_batch[0].to(device), attention_mask=warmup_batch[1].to(device))
+    torch.cuda.synchronize()
+
+    start_event = torch.cuda.Event(enable_timing=True)
+    end_event = torch.cuda.Event(enable_timing=True)
+
+    start_event.record()
     for batch in dataloader:
         input_ids = batch[0].to(device)
         attention_mask = batch[1].to(device)
@@ -70,9 +83,14 @@ def evaluate_perplexity(model, dataloader, device):
         loss = loss * shift_mask
         total_tokens += shift_mask.sum().item()
         total_loss += loss.sum().item()
+        n_samples += input_ids.size(0)
+    end_event.record()
+
+    torch.cuda.synchronize()
+    latency_sec = start_event.elapsed_time(end_event) / 1000.0
 
     avg_loss = total_loss / total_tokens if total_tokens > 0 else float("inf")
-    return math.exp(avg_loss)
+    return math.exp(avg_loss), latency_sec, n_samples
 
 
 def get_gpu_memory_gb(device_index=0):
@@ -121,25 +139,21 @@ def main():
     torch.cuda.empty_cache()
     gc.collect()
 
-    ppl_results = {}
-    total_time = 0.0
+    results = {}
     for ds_name in datasets_to_eval:
         dataloader = load_eval_dataloader(tokenizer, dataset_name=ds_name, seq_len=args.seq_len, batch_size=args.batch_size)
-        t0 = time.time()
-        ppl = evaluate_perplexity(model, dataloader, torch.device(args.device))
-        elapsed = time.time() - t0
-        ppl_results[ds_name] = ppl
-        total_time += elapsed
-        print(f"  {ds_name}: PPL={ppl:.2f} ({elapsed:.1f}s)", flush=True)
+        ppl, latency, n_samples = evaluate_perplexity(model, dataloader, torch.device(args.device))
+        results[ds_name] = {"ppl": ppl, "latency_sec": latency, "n_samples": n_samples}
+        print(f"  {ds_name}: PPL={ppl:.2f}, latency={latency:.2f}s, samples={n_samples}, per_sample={latency/n_samples*1000:.1f}ms", flush=True)
 
     torch.cuda.synchronize()
     gpu_mem_gb = get_gpu_memory_gb()
 
     print(f"\n{'='*40}", flush=True)
-    for ds_name, ppl in ppl_results.items():
-        print(f"  PPL ({ds_name}): {ppl:.2f}", flush=True)
+    for ds_name, r in results.items():
+        print(f"  PPL ({ds_name}): {r['ppl']:.2f}", flush=True)
+        print(f"  Latency ({ds_name}): {r['latency_sec']:.2f}s ({r['latency_sec']/r['n_samples']*1000:.1f}ms/sample)", flush=True)
     print(f"  GPU memory: {gpu_mem_gb:.2f} GB", flush=True)
-    print(f"  Total eval time: {total_time:.1f} s", flush=True)
     print(f"{'='*40}", flush=True)
 
 
