@@ -1,24 +1,18 @@
-"""Worker: load sliced model, forward at (bs, seq_len), print peak memory."""
+"""Worker: load sliced model, forward at (bs, seq_len), print peak memory.
+
+Uses torch.cuda.max_memory_allocated() for per-process peak measurement.
+"""
 import argparse
 import gc
 import json
 import sys
 
-import pynvml
 import torch
 
 sys.path.insert(0, "src")
 from slicegpt import hf_utils
 
 HF_MODEL = "meta-llama/Llama-2-7b-hf"
-
-
-def get_gpu_memory_gb(idx=0):
-    pynvml.nvmlInit()
-    h = pynvml.nvmlDeviceGetHandleByIndex(idx)
-    m = pynvml.nvmlDeviceGetMemoryInfo(h)
-    pynvml.nvmlShutdown()
-    return m.used / 1024**3
 
 
 def main():
@@ -38,13 +32,14 @@ def main():
     torch.cuda.empty_cache()
     gc.collect()
 
-    mem_before = get_gpu_memory_gb()
+    torch.cuda.reset_peak_memory_stats()
+    mem_before = torch.cuda.memory_allocated() / 1024**3
     input_ids = torch.randint(1, 32000, (args.bs, args.seq_len), device="cuda")
     with torch.no_grad():
         try:
             model(input_ids=input_ids)
             torch.cuda.synchronize()
-            mem_peak = get_gpu_memory_gb()
+            mem_peak = torch.cuda.max_memory_allocated() / 1024**3
             print(json.dumps({"status": "ok", "mem_before_gb": round(mem_before, 2), "mem_peak_gb": round(mem_peak, 2)}))
         except torch.cuda.OutOfMemoryError:
             print(json.dumps({"status": "OOM"}))
